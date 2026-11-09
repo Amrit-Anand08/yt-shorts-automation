@@ -103,18 +103,39 @@ youtube-shorts-studio/
 │   ├── Dockerfile                  # Slim Debian image with Chromium dependencies & Remotion browser
 │   ├── package.json
 │   ├── remotion.config.ts          # Remotion studio configuration
-│   ├── server.js                   # Express server wrapping Remotion bundle & renderMedia
+│   ├── server.js                   # Express server entry point
+│   ├── server/                     # Modular server services (validation & renderJob)
+│   │   ├── validate.js
+│   │   └── renderJob.js
 │   ├── public/audio/               # Background music and UI sound effects
 │   └── src/
-│       ├── Composition.tsx         # Main dynamic 9:16 Shorts composition
+│       ├── index.ts                # Remotion entry point
+│       ├── Root.tsx                # Composition registration
+│       ├── Composition.tsx         # Main dynamic composition assembly & backwards-compatible re-exports
 │       ├── PremiumPrototype.tsx    # Standalone demo composition
-│       ├── Root.tsx                # Remotion root register
-│       └── index.ts
+│       ├── types/                  # TypeScript interfaces and type definitions
+│       ├── constants/              # Design tokens (colors, typography, defaults)
+│       ├── utils/                  # Animation, syntax tokenizer, and scene helpers
+│       └── components/             # Modular React Remotion components
+│           ├── common/             # Backdrop, Chrome, KineticTitle, Card, Badge, Stack
+│           ├── mascot/             # Animated Robot Mascot, SpeechBubble
+│           ├── code/               # CodePanel with syntax highlighting & moving scan line
+│           ├── scenes/             # Hook, Explanation, Code, Example, and Outro layouts
+│           └── MainVideo.tsx       # Root sequence & multi-track audio orchestrator
 └── worker/                         # Business logic & AI orchestration
     ├── Dockerfile                  # Node.js alpine image with FFmpeg
     ├── package.json
     └── src/
-        └── server.js               # Express API: Gemini script generation, TTS, Remotion caller
+        ├── server.js               # Entry point & server listener
+        ├── app.js                  # Express application setup & middleware
+        ├── config/                 # Environment variables & runtime settings
+        ├── constants/              # Scene types & SFX audio mapping
+        ├── db/                     # PostgreSQL pool & schema migrations
+        ├── utils/                  # Text sanitization, audio WAV packaging, ffprobe duration
+        ├── services/               # Gemini AI script generation, TTS, Remotion caller & job claim
+        ├── controllers/            # Route handler logic for health, scripts, and jobs
+        ├── routes/                 # Express route definitions
+        └── middlewares/            # Error handling middleware
 ```
 
 ---
