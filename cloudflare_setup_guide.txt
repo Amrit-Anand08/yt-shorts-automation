@@ -1,0 +1,18 @@
+अगली बार Laptop Restart होने पर क्या करना है?
+1. Docker Desktop चालू करो।
+
+2. Cloudflare Tunnel चालू करो:
+cloudflared tunnel --url http://localhost:5678
+
+3. Cloudflare से मिला नया URL root .env में पुराने URL की जगह paste करके Save करो।
+N8N_WEBHOOK_URL=https://NEW-URL.trycloudflare.com/
+
+4. एक जरूरी बात: नई PowerShell window खोलना बेहतर रहेगा, ताकि पुरानी PowerShell environment variable override न करे।
+
+5. Project directory में जाकर:
+docker compose up -d --force-recreate n8n
+
+6. Verify करो:
+docker compose exec n8n printenv WEBHOOK_URL
+
+नया URL दिखाई देना चाहिए।
