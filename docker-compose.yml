@@ -1,0 +1,168 @@
+
+services:
+  # -----------------------------
+  # PostgreSQL Database
+  # -----------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: studio-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # -----------------------------
+  # n8n Workflow Automation
+  # -----------------------------
+  n8n:
+    image: n8nio/n8n:stable
+    container_name: studio-n8n
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    ports:
+      - "127.0.0.1:5678:5678"
+
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      N8N_PROXY_HOPS: 1
+
+      GENERIC_TIMEZONE: Asia/Kolkata
+      TZ: Asia/Kolkata
+
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # -----------------------------
+  # Remotion Video Renderer
+  # -----------------------------
+  renderer:
+    build:
+      context: ./renderer
+      dockerfile: Dockerfile
+
+    container_name: studio-renderer
+    restart: unless-stopped
+
+    environment:
+      PORT: 5002
+      OUTPUT_DIR: /app/out/jobs
+
+    volumes:
+      - studio_audio:/app/public/generated-audio
+      - studio_output:/app/out/jobs
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:5002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # -----------------------------
+  # Node.js Video Worker
+  # -----------------------------
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+
+    container_name: studio-worker
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      renderer:
+        condition: service_healthy
+
+    ports:
+      - "127.0.0.1:5001:5000"
+
+    environment:
+      PORT: 5000
+
+      DB_HOST: postgres
+      DB_PORT: 5432
+
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GEMINI_TTS_MODEL: ${GEMINI_TTS_MODEL:-gemini-3.8-flash-tts}
+      GEMINI_TTS_PRIMARY: ${GEMINI_TTS_PRIMARY:-gemini-3.8-flash-tts}
+      GEMINI_TTS_SECONDARY: ${GEMINI_TTS_SECONDARY:-gemini-3.8-flash-lite-tts}
+      GEMINI_TTS_TERTIARY: ${GEMINI_TTS_TERTIARY:-gemini-2.5-flash-preview-tts}
+      GEMINI_TTS_FALLBACK_ENABLED: ${GEMINI_TTS_FALLBACK_ENABLED:-true}
+
+      GEMINI_TEXT_PRIMARY: ${GEMINI_TEXT_PRIMARY:-gemini-3.8-flash}
+      GEMINI_TEXT_SECONDARY: ${GEMINI_TEXT_SECONDARY:-}
+      GEMINI_TEXT_TERTIARY: ${GEMINI_TEXT_TERTIARY:-}
+      GEMINI_TEXT_FALLBACK_ENABLED: ${GEMINI_TEXT_FALLBACK_ENABLED:-false}
+
+      RENDERER_URL: http://renderer:5002
+
+      MEDIA_AUDIO_DIR: /media/audio
+      MEDIA_OUTPUT_DIR: /media/output
+
+      CHANNEL_NAME: ${CHANNEL_NAME:-CODING GALAXY}
+
+      # YouTube upload (V1)
+      YT_CLIENT_ID: ${YT_CLIENT_ID:-}
+      YT_CLIENT_SECRET: ${YT_CLIENT_SECRET:-}
+      YT_REFRESH_TOKEN: ${YT_REFRESH_TOKEN:-}
+      YT_DEFAULT_PRIVACY: ${YT_DEFAULT_PRIVACY:-private}
+      YT_CATEGORY_ID: ${YT_CATEGORY_ID:-27}
+      YT_MADE_FOR_KIDS: ${YT_MADE_FOR_KIDS:-false}
+      YT_CONTAINS_SYNTHETIC_MEDIA: ${YT_CONTAINS_SYNTHETIC_MEDIA:-false}
+
+      # Auto cleanup of local videos (V1)
+      RETENTION_DAYS: ${RETENTION_DAYS:-3}
+      CLEANUP_INTERVAL_MINUTES: ${CLEANUP_INTERVAL_MINUTES:-360}
+      CLEANUP_DRY_RUN: ${CLEANUP_DRY_RUN:-false}
+
+    volumes:
+      - studio_audio:/media/audio
+      - studio_output:/media/output
+
+# -----------------------------
+# Persistent Volumes
+# -----------------------------
+volumes:
+  postgres_data:
+  n8n_data:
+  studio_audio:
+  studio_output:

@@ -1,0 +1,21 @@
+{
+  "name": "worker",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/server.js",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\"",
+    "start": "node src/server.js",
+    "youtube:auth": "node scripts/youtube-auth.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^18.0.9",
+    "express": "^5.3.0",
+    "googleapis": "^190.0.0",
+    "pg": "^8.23.1"
+  }
+}

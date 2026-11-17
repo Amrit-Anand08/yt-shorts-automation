@@ -1,0 +1,770 @@
+{
+  "name": "YouTube Shorts Studio - Main Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🚀 SETUP GUIDE - read this first\n\n**What this workflow does:** user sends a topic on Telegram → AI script → voiceover + video render → finished Short is sent to Telegram AND uploaded to your YouTube channel, with a status message after every step.\n\n### 0. Prerequisites\n- The **worker** (Node `server.js`), **renderer** (Remotion), **Postgres** and **n8n** run in the *same Docker network*, so n8n can reach `http://worker:5000`.\n- Worker `.env` has `GEMINI_API_KEY`, `POSTGRES_*` etc. (never commit that file).\n\n### 1. Create the Telegram bot\nOpen **@BotFather** → `/newbot` → copy the **bot token**.\n\n### 2. Add the credential in n8n\n**Credentials → Add credential → Telegram API** → paste the token → Save.\nThen open **every Telegram node** (the trigger + all `Notify:` / `Error:` nodes + `Send a video`) and pick that credential. (Credentials are NOT stored in this file.)\n\n### 3. Check the worker URL\nAll HTTP nodes call `http://worker:5000`. If your compose service name or port differs, change it in: *Generate Video Script, Create Video Job, Process Video Job, Download Generated Video, Get Job Error Details*.\n\n### 4. Telegram needs a public HTTPS webhook\nSet n8n env `WEBHOOK_URL=https://your-domain` (use ngrok / Cloudflare Tunnel for local testing), restart n8n, then **Activate** the workflow.\n\n### 5. Allow only YOUR chat (important!)\nOpen node **Check Allowed Chat** and put your Telegram chat ID in `ALLOWED_CHAT_IDS`. Don't know it? Message the bot once - it replies with your ID. Every run now uploads to YouTube, so strangers must not be able to use the bot.\n\n### 6. YouTube\nFollow `YOUTUBE_SETUP_GUIDE.md` once (Google login). Check `http://127.0.0.1:5001/youtube/status`.\n\n### 7. Test\nSend your bot a message in the format shown in the note below. First uploads are PRIVATE (see `YT_DEFAULT_PRIVACY`).",
+        "height": 760,
+        "width": 980,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -1120
+      ],
+      "id": "6c3e1c0f-3281-4993-9695-156743694b3e",
+      "name": "Note: Setup Guide"
+    },
+    {
+      "parameters": {
+        "content": "### 🔒 Before pushing to GitHub\n- Credentials, webhook ids and instance id were removed from this file.\n- Never commit the bot token, `.env` or API keys.\n- After importing, re-select the Telegram credential on each Telegram node.",
+        "height": 300,
+        "width": 520,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        500,
+        -1120
+      ],
+      "id": "3cdad36c-f381-4789-9764-5632483901a6",
+      "name": "Note: Security"
+    },
+    {
+      "parameters": {
+        "content": "### 📩 Message format\n```\nTopic: JavaScript Array Methods\nAudience: Beginners\nLanguage: Hinglish\nDuration: 30 seconds\n```\nDuration: 1-180 seconds (worker limit).",
+        "height": 130,
+        "width": 440,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -540
+      ],
+      "id": "82186278-7d20-4efb-a1be-7e2cf41b274f",
+      "name": "Note: Message Format"
+    },
+    {
+      "parameters": {
+        "content": "### 🔔 Progress messages (green path)\nOne Telegram message after each step: request received → script ready → job created → video rendered → video sent → uploaded to YouTube. Edit the text of any `Notify:` node freely. They all use the chat id of the person who messaged the bot.",
+        "height": 130,
+        "width": 1000,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        -540
+      ],
+      "id": "33c63f98-99e2-4f93-ad5f-d3081eda1cc7",
+      "name": "Note: Progress Messages"
+    },
+    {
+      "parameters": {
+        "content": "### ⏳ Slow step\n`Process Video Job` does voiceover + render in one call, so it can take several minutes (timeout 15 min). If the job is already running, the worker answers 409 and you get a render error message.\n\n`Upload to YouTube` also has a 15 min timeout. A job is uploaded only once (re-calling it returns the same link).",
+        "height": 130,
+        "width": 760,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        -540
+      ],
+      "id": "60cb0697-74fc-4bae-911a-3b2c258be262",
+      "name": "Note: Slow Step"
+    },
+    {
+      "parameters": {
+        "content": "### ❌ Error messages (red path)\nEvery HTTP node has *On Error → Continue (using error output)*. Its red output goes to an `Error:` node that tells the user **which step failed and why**.\n`Get Job Error Details` reads the exact failure reason saved by the worker (`error_message`), so keep the worker on the latest `server.js`.",
+        "height": 160,
+        "width": 2000,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -272,
+        30
+      ],
+      "id": "a641a73e-9dd5-4ed8-b18d-089564edb3db",
+      "name": "Note: Error Handling"
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -496,
+        -384
+      ],
+      "id": "339f3d19-f4bb-47fc-bdce-47ae19ad73b6",
+      "name": "Telegram Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst message = $json.message?.text || \"\";\n\nconst fields = {};\n\nfor (const line of message.split(/\\r?\\n/)) {\n  const separator = line.indexOf(\":\");\n\n  if (separator === -1) continue;\n\n  const key = line.slice(0, separator).trim().toLowerCase();\n  const value = line.slice(separator + 1).trim();\n\n  fields[key] = value;\n}\n\nconst topic = fields.topic;\nconst audience = fields.audience;\nconst language = fields.language;\n\n// Supports: 10, 10 seconds, 10 sec, 10s\nconst durationMatch = fields.duration?.match(\n  /^\\s*(\\d+(?:\\.\\d+)?)\\s*(?:seconds?|secs?|s)?\\s*$/i\n);\n\nconst duration = durationMatch\n  ? Math.round(Number(durationMatch[1]))\n  : NaN;\n\nif (\n  !topic ||\n  !audience ||\n  !language ||\n  !Number.isFinite(duration) ||\n  duration < 1 ||\n  duration > 180\n) {\n  throw new Error(\n    \"Invalid format. Required: Topic, Audience, Language, Duration\"\n  );\n}\n\nreturn [\n  {\n    json: {\n      topic,\n      audience,\n      language,\n      duration_seconds: duration,\n      telegram_chat_id: $json.message.chat.id\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        -384
+      ],
+      "id": "4f1be09f-7f58-4cfb-80fd-17beb50c896d",
+      "name": "Parse Telegram Input",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:5000/scripts/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topic: $('Parse Telegram Input').item.json.topic, audience: $('Parse Telegram Input').item.json.audience, language: $('Parse Telegram Input').item.json.language, duration_seconds: Number($('Parse Telegram Input').item.json.duration_seconds) }) }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        400,
+        -384
+      ],
+      "id": "fbd2655b-8a38-43ee-9de9-df41f31a0677",
+      "name": "Generate Video Script",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://worker:5000/jobs",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ request_id: Number($('Generate Video Script').item.json.request.id) }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        848,
+        -384
+      ],
+      "id": "967ef54b-410f-4152-b672-f637bc2102f5",
+      "name": "Create Video Job",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://worker:5000/jobs/' + $('Create Video Job').item.json.job.id + '/process' }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1296,
+        -384
+      ],
+      "id": "60503746-06df-4bec-9dd5-75191152862c",
+      "name": "Process Video Job",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'http://worker:5000/jobs/' + $('Create Video Job').item.json.job.id + '/video' }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1744,
+        -384
+      ],
+      "id": "8b703639-ddfe-4b83-acbe-ed8293aa7205",
+      "name": "Download Generated Video",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "sendVideo",
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "binaryData": true,
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1968,
+        -384
+      ],
+      "id": "db46bfea-be02-4304-a1a7-41dab775b876",
+      "name": "Send a video",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '✅ Request mil gayi!\\n\\n📌 Topic: ' + $('Parse Telegram Input').item.json.topic + '\\n👥 Audience: ' + $('Parse Telegram Input').item.json.audience + '\\n🌐 Language: ' + $('Parse Telegram Input').item.json.language + '\\n⏱ Duration: ' + $('Parse Telegram Input').item.json.duration_seconds + ' sec\\n\\n⏳ Step 1/5: AI script likh raha hai...' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        176,
+        -384
+      ],
+      "id": "0ca0bbc5-b478-4050-b310-c4afcd7aecac",
+      "name": "Notify: Request Received"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '📝 Script ready ✅\\n\\n🎬 Title: ' + $('Generate Video Script').item.json.script.title + '\\n🎞 Scenes: ' + $('Generate Video Script').item.json.script.scenes.length + '\\n\\n⏳ Step 2/5: Video job bana raha hoon...' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        624,
+        -384
+      ],
+      "id": "629b6bcf-0157-405f-a715-8e0113e34132",
+      "name": "Notify: Script Ready"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '📦 Job #' + $('Create Video Job').item.json.job.id + ' ban gaya ✅\\n\\n⏳ Step 3/5: Voiceover banake video render ho raha hai.\\nIsme kuch minute lag sakte hain, thoda wait karo 🙏' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1072,
+        -384
+      ],
+      "id": "07d1ec38-0f81-4fab-bb4f-4c1460c3cbb4",
+      "name": "Notify: Job Created"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '🎬 Video render ho gaya ✅\\n\\n⏳ Step 4/5: Video tumhe Telegram pe bhej raha hoon...' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        -384
+      ],
+      "id": "d7415770-2e8c-48dc-89a1-96a3d11cbae8",
+      "name": "Notify: Video Rendered"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '📤 Video Telegram pe bhej di ✅\\n\\n⏳ Step 5/5: YouTube pe upload ho raha hai (title/description AI bana raha hai)...' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2192,
+        -384
+      ],
+      "id": "45fe1af5-7ad5-41b3-9a4c-0133b7f49f45",
+      "name": "Notify: Uploading to YouTube"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "❌ Format galat hai, kaam shuru nahi hua.\n\nIs format mein bhejo:\n\nTopic: JavaScript Array Methods\nAudience: Beginners\nLanguage: Hinglish\nDuration: 30 seconds",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -48,
+        -160
+      ],
+      "id": "bea790c8-b627-4b2c-ab74-58240ff0544f",
+      "name": "Error: Invalid Input"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '❌ Step 1/5 fail: Script nahi ban payi.\\n\\n⚠️ Reason: ' + String($json.error?.description || $json.error?.message || $json.message || 'Unknown error').slice(0, 500) + '\\n\\n🔁 Dobara try karo. Baar baar aaye to Gemini API key / model check karo.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        400,
+        -160
+      ],
+      "id": "33bff208-3f11-4f3d-bb98-065eef520579",
+      "name": "Error: Script Failed"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '❌ Step 2/5 fail: Video job nahi ban paya.\\n\\n⚠️ Reason: ' + String($json.error?.description || $json.error?.message || $json.message || 'Unknown error').slice(0, 500) + '\\n\\n🔁 Dobara try karo. Database / worker check karo.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        848,
+        -160
+      ],
+      "id": "db37efb0-91a6-4d15-933d-b0fb0b4575d7",
+      "name": "Error: Job Creation Failed"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'http://worker:5000/jobs/' + $('Create Video Job').item.json.job.id }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1296,
+        -160
+      ],
+      "id": "e21abd5f-ac3b-4c8b-8212-c3a452bf598e",
+      "name": "Get Job Error Details",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '❌ Step 3/5 fail: Video render nahi ho paya.\\n\\n🆔 Job ID: ' + $('Create Video Job').item.json.job.id + '\\n⚠️ Reason: ' + String($json.error_message || $json.error?.message || ('Job status: ' + ($json.status || 'unknown'))).slice(0, 500) + '\\n\\n🔁 Job dobara chalane ke liye /jobs/' + $('Create Video Job').item.json.job.id + '/process call karo.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1520,
+        -160
+      ],
+      "id": "4aba7660-3a12-43a4-b0b8-7af08f4a277e",
+      "name": "Error: Render Failed"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '❌ Step 4/5 fail: Video download nahi ho payi.\\n\\n⚠️ Reason: ' + String($json.error?.description || $json.error?.message || $json.message || 'Unknown error').slice(0, 500) }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1744,
+        -160
+      ],
+      "id": "08403fc2-6963-4108-bb19-b4674657aa46",
+      "name": "Error: Download Failed"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '❌ Step 4/5 fail: Video Telegram par send nahi ho payi.\\n\\n⚠️ Reason: ' + String($json.error?.description || $json.error?.message || $json.message || 'Unknown error').slice(0, 500) + '\\n\\n(File badi ho sakti hai ya network issue.)' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1968,
+        -160
+      ],
+      "id": "9c3e451b-75f4-4df0-8a66-2a9ecb51911a",
+      "name": "Error: Telegram Send Failed"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Only these Telegram chat IDs may use the bot (every run can upload to YouTube!).\n// 1) Send any message to your bot.  2) The bot replies with your chat ID.\n// 3) Put it below, e.g. [\"123456789\"], save and activate the workflow.\nconst ALLOWED_CHAT_IDS = [\"PASTE_YOUR_CHAT_ID_HERE\"];\n\nconst chatId = String($json.message?.chat?.id ?? \"\");\n\nif (!ALLOWED_CHAT_IDS.includes(chatId)) {\n  throw new Error(\"Chat not allowed\");\n}\n\nreturn [{ json: $json }];\n"
+      },
+      "name": "Check Allowed Chat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        -384
+      ],
+      "onError": "continueErrorOutput",
+      "id": "84df04c9-e06b-4df3-92cc-8c09e5a24324"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '⛔ Ye bot private hai.\\n\\n🆔 Tumhari chat ID: ' + $('Telegram Trigger').item.json.message.chat.id + '\\n\\nAgar ye tumhara bot hai to is ID ko n8n workflow ke \"Check Allowed Chat\" node me ALLOWED_CHAT_IDS me daalo.' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Error: Not Allowed",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -272,
+        -160
+      ],
+      "id": "b9f4c34e-b2d5-45e2-828c-f1c03620b2a5"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://worker:5000/jobs/' + $('Create Video Job').item.json.job.id + '/upload' }}",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "name": "Upload to YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2416,
+        -384
+      ],
+      "onError": "continueErrorOutput",
+      "id": "0fa5b3d5-e82a-42ea-bc6f-50c2d7cc6f07"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '🎉 YouTube pe upload ho gaya ✅\\n\\n🎬 Title: ' + $json.title + '\\n🔒 Privacy: ' + $json.privacy + '\\n🔗 ' + $json.youtube_url + ($json.privacy === 'private' ? '\\n\\n👀 Video abhi private hai. YouTube Studio me check karke public kar sakte ho.' : '') + '\\n\\n🗑 Local video ' + $json.retention_days + ' din baad auto-delete ho jayegi.\\n🆔 Job ID: ' + $json.jobId }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Notify: Uploaded",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        -384
+      ],
+      "id": "1f748446-38a4-4cd6-96cc-8f03b064ec68"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'http://worker:5000/jobs/' + $('Create Video Job').item.json.job.id }}",
+        "options": {}
+      },
+      "name": "Get Upload Error Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2416,
+        -160
+      ],
+      "onError": "continueRegularOutput",
+      "id": "ef82db63-5143-4bfc-a353-36455b07a3b2"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ '❌ Step 5/5 fail: YouTube upload nahi ho paya.\\n\\n🆔 Job ID: ' + $('Create Video Job').item.json.job.id + '\\n⚠️ Reason: ' + String($json.upload?.error_message || $json.error?.message || ('Job status: ' + ($json.status || 'unknown'))).slice(0, 700) + '\\n\\n🎬 Video upar Telegram me aa chuki hai. Problem theek karke dobara upload: POST /jobs/' + $('Create Video Job').item.json.job.id + '/upload' }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "name": "Error: Upload Failed",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2640,
+        -160
+      ],
+      "id": "5616aa09-c57f-4b78-85da-4bdebef5cef6"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Allowed Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Telegram Input": {
+      "main": [
+        [
+          {
+            "node": "Notify: Request Received",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Invalid Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify: Request Received": {
+      "main": [
+        [
+          {
+            "node": "Generate Video Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video Script": {
+      "main": [
+        [
+          {
+            "node": "Notify: Script Ready",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Script Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify: Script Ready": {
+      "main": [
+        [
+          {
+            "node": "Create Video Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Video Job": {
+      "main": [
+        [
+          {
+            "node": "Notify: Job Created",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Job Creation Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify: Job Created": {
+      "main": [
+        [
+          {
+            "node": "Process Video Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Video Job": {
+      "main": [
+        [
+          {
+            "node": "Notify: Video Rendered",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Job Error Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Job Error Details": {
+      "main": [
+        [
+          {
+            "node": "Error: Render Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify: Video Rendered": {
+      "main": [
+        [
+          {
+            "node": "Download Generated Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Generated Video": {
+      "main": [
+        [
+          {
+            "node": "Send a video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Download Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a video": {
+      "main": [
+        [
+          {
+            "node": "Notify: Uploading to YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Telegram Send Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Allowed Chat": {
+      "main": [
+        [
+          {
+            "node": "Parse Telegram Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error: Not Allowed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify: Uploading to YouTube": {
+      "main": [
+        [
+          {
+            "node": "Upload to YouTube",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to YouTube": {
+      "main": [
+        [
+          {
+            "node": "Notify: Uploaded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Upload Error Details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Upload Error Details": {
+      "main": [
+        [
+          {
+            "node": "Error: Upload Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "meta": {},
+  "nodeGroups": [],
+  "tags": []
+}

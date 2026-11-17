@@ -1,0 +1,30 @@
+YOUTUBE SHORTS STUDIO - LAPTOP RESTART GUIDE
+============================================
+
+1. Docker Desktop खोलो और Docker Engine Start होने दो।
+
+2. नई PowerShell Window खोलो और Cloudflare Tunnel Start करो:
+   cloudflared tunnel --url http://localhost:5678
+
+3. Cloudflare से मिला नया URL Copy करो।
+
+4. Project की Root .env File खोलो और URL Update करो:
+   N8N_WEBHOOK_URL=https://NEW-URL.trycloudflare.com
+
+5. दूसरी नई PowerShell Window खोलो और Project Directory में जाओ:
+   cd C:\Users\Amrit\OneDrive\Desktop\youtube-shorts-studio
+
+6. पुराना Environment Variable हटाओ:
+   Remove-Item Env:N8N_WEBHOOK_URL -ErrorAction SilentlyContinue
+
+7. n8n Container Recreate करो:
+   docker compose up -d --force-recreate n8n
+
+8. URL Verify करो:
+   docker compose exec n8n printenv WEBHOOK_URL
+   Output में नया Cloudflare URL दिखना चाहिए।
+
+IMPORTANT:
+- Cloudflare Tunnel वाली PowerShell Window बंद मत करना।
+- हर Restart पर नया URL .env में Update करना होगा।
+- Step 6 जरूर करना, ताकि पुराना Environment Variable नई URL को Override न करे।

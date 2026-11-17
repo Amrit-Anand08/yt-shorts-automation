@@ -1,0 +1,183 @@
+YOUTUBE SHORTS STUDIO
+CODE CHANGE & DOCKER UPDATE GUIDE
+=================================
+
+Project folder:
+C:\Users\Amrit\OneDrive\Desktop\Automation v-01
+
+Compose project name:
+youtube-shorts-studio
+
+IMPORTANT PROJECT RULES
+----------------------
+1. Always run Docker Compose commands from the Automation v-01 folder.
+2. Always use:
+   --project-name youtube-shorts-studio
+   --env-file .env
+3. This keeps Compose attached to the existing project identity and its
+   existing named volumes.
+4. Never use "docker compose down -v" for a normal update.
+5. Never run "docker volume prune" or "docker system prune --volumes".
+6. Do not share or commit the .env file. It contains secrets.
+7. Take backups before risky database, volume, or migration changes.
+
+STEP 1 - OPEN THE PROJECT
+-------------------------
+Open PowerShell and run:
+
+cd "C:\Users\Amrit\OneDrive\Desktop\Automation v-01"
+
+STEP 2 - CHOOSE THE UPDATE COMMAND
+----------------------------------
+
+A. Only internal application code changed
+   Examples: worker logic, renderer logic, API/business logic.
+
+   docker compose --project-name youtube-shorts-studio --env-file .env up -d --build
+
+   This rebuilds locally built images when needed and updates/recreates
+   services whose image or configuration has changed.
+
+B. Only .env values changed
+   Examples: Gemini API key, model name, database settings.
+
+   docker compose --project-name youtube-shorts-studio --env-file .env up -d --force-recreate
+
+   Environment values are injected when containers are created. Recreate
+   containers so they receive the new values. Rebuilding images is normally
+   unnecessary for an .env-only change.
+
+C. A Dockerfile or dependency file changed
+   Examples: Dockerfile, requirements.txt, package.json, package-lock.json.
+
+   docker compose --project-name youtube-shorts-studio --env-file .env up -d --build --force-recreate
+
+   This rebuilds locally built images and recreates the services.
+
+D. docker-compose.yml changed
+   First validate the Compose configuration:
+
+   docker compose --project-name youtube-shorts-studio --env-file .env config --quiet
+
+   If validation succeeds, apply it:
+
+   docker compose --project-name youtube-shorts-studio --env-file .env up -d --build
+
+   Add --force-recreate if you specifically need all affected containers
+   recreated, for example after changing environment configuration.
+
+E. Multiple code/configuration files changed, or you want a full refresh
+
+   docker compose --project-name youtube-shorts-studio --env-file .env up -d --build --force-recreate
+
+   This is the general full-update command. It rebuilds locally built images
+   and recreates the services. Official images such as Postgres and n8n are
+   not rebuilt from source; Compose uses the configured images.
+
+STEP 3 - UPDATE ONLY ONE SERVICE (OPTIONAL)
+-------------------------------------------
+If only the Worker changed:
+
+docker compose --project-name youtube-shorts-studio --env-file .env up -d --build --no-deps worker
+
+If only the Renderer changed:
+
+docker compose --project-name youtube-shorts-studio --env-file .env up -d --build --no-deps renderer
+
+Use this only when the changed service does not require another service to
+be recreated. If shared configuration or dependencies changed, update the
+relevant services together instead.
+
+STEP 4 - VERIFY AFTER EVERY UPDATE
+----------------------------------
+Check service status:
+
+docker compose --project-name youtube-shorts-studio ps
+
+Check recent logs for all services:
+
+docker compose --project-name youtube-shorts-studio logs --tail=100
+
+Check Worker logs:
+
+docker compose --project-name youtube-shorts-studio logs --tail=100 worker
+
+Other service names:
+- renderer
+- n8n
+- postgres
+
+Check running containers:
+
+docker ps
+
+Then run a small test job through the n8n workflow and verify that the
+complete pipeline works (script, audio, rendering, and output).
+
+TROUBLESHOOTING
+---------------
+If a service fails after an update:
+
+1. Check its logs:
+   docker compose --project-name youtube-shorts-studio logs --tail=150 SERVICE_NAME
+
+2. Check status:
+   docker compose --project-name youtube-shorts-studio ps
+
+3. Fix the code/configuration issue, then rerun the appropriate update
+   command from STEP 2.
+
+4. Do not delete volumes to try to fix an ordinary code or configuration
+   problem.
+
+IMPORTANT: DATA-PRESERVATION WARNINGS
+-------------------------------------
+Do NOT use these commands as part of a normal update:
+
+docker compose down -v
+docker volume prune
+docker system prune --volumes
+
+They can delete persistent data, including:
+- PostgreSQL database data
+- n8n workflows and credentials
+- Stored audio
+- Rendered video output
+
+A normal "docker compose up -d ..." update does not ask Compose to delete
+named volumes. Still, back up important data before database migrations,
+volume changes, or destructive maintenance.
+
+QUICK REFERENCE
+---------------
+Change                         Command
+-----------------------------  --------------------------------------------
+Application code               docker compose --project-name youtube-shorts-studio --env-file .env up -d --build
+
+.env only                      docker compose --project-name youtube-shorts-studio --env-file .env up -d --force-recreate
+
+Dockerfile/dependencies        docker compose --project-name youtube-shorts-studio --env-file .env up -d --build --force-recreate
+
+Compose file                   Validate with config --quiet, then up -d --build
+
+Full refresh                   docker compose --project-name youtube-shorts-studio --env-file .env up -d --build --force-recreate
+
+Verify                         docker compose --project-name youtube-shorts-studio ps
+
+Logs                           docker compose --project-name youtube-shorts-studio logs --tail=100
+
+DEFAULT COMMAND TO REMEMBER
+---------------------------
+For a general full code/configuration update, run:
+
+docker compose --project-name youtube-shorts-studio --env-file .env up -d --build --force-recreate
+
+Run it from the Automation v-01 folder.
+
+END OF GUIDE
+
+
+--- V1 update ---
+Nayi env values (.env) daalne ke baad: docker compose up -d --build
+YouTube login ka ek baar ka setup: YOUTUBE_SETUP_GUIDE.md
+Changes ki list: CHANGELOG.md
